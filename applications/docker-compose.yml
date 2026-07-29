@@ -1,0 +1,70 @@
+name: sgcut
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sgcut
+      POSTGRES_PASSWORD: sgcut
+      POSTGRES_DB: sgcut
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U sgcut -d sgcut']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Exposed for convenience/inspection; the app talks to it over the internal network.
+    ports:
+      - '5432:5432'
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: 'postgresql://sgcut:sgcut@postgres:5432/sgcut?schema=public'
+      PORT: '4000'
+      JWT_SECRET: 'dev-only-change-me'
+      FRONTEND_URL: 'http://localhost:3000'
+      COOKIE_SECURE: 'false'
+      # Auth: 'demo' (default, offline) or 'cognito'.
+      AUTH_PROVIDER: 'cognito'
+      COGNITO_USER_POOL_ID: 'eu-west-3_s7BhtGWWn'
+      COGNITO_CLIENT_ID: '450qv2b4bt0fn7t5qsffcv16ov'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # The short-link redirector lives here (http://localhost:4000/<code>).
+    ports:
+      - '4000:4000'
+    healthcheck:
+      test: ['CMD', 'curl', '-fsS', 'http://localhost:4000/api/health']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        BACKEND_URL: 'http://backend:4000'
+        # Leave unset to derive the short host from the app's own URL (localhost:3000 in dev).
+        # Set to a brand domain (e.g. sgcut.co) to display branded short links in production.
+        NEXT_PUBLIC_SHORT_DOMAIN: ''
+        # Auth: 'demo' (default, offline) or 'cognito'.
+        NEXT_PUBLIC_AUTH_PROVIDER: 'cognito'
+        NEXT_PUBLIC_APP_URL: 'http://localhost:3000'
+        NEXT_PUBLIC_COGNITO_USER_POOL_ID: 'eu-west-3_s7BhtGWWn'
+        NEXT_PUBLIC_COGNITO_CLIENT_ID: '450qv2b4bt0fn7t5qsffcv16ov'
+        # Amplify expects the Hosted UI domain WITHOUT the https:// scheme.
+        NEXT_PUBLIC_COGNITO_DOMAIN: 'eu-west-3s7bhtgwwn.auth.eu-west-3.amazoncognito.com'
+    environment:
+      # Also set at runtime; the build arg is what actually wires the rewrites.
+      BACKEND_URL: 'http://backend:4000'
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - '3000:3000'
+
+volumes:
+  pgdata:
