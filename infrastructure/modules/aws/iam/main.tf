@@ -28,6 +28,12 @@ variable "create_oidc_provider" {
   default     = true
 }
 
+variable "ssm_frontend_prefix" {
+  description = "SSM Parameter Store prefix holding the NON-SECRET frontend build config (e.g. /sgcut/dev/frontend). When set, the deploy role gets ssm:GetParameter(s) scoped to it, so the app CD pipeline can read the Cognito/CloudFront values without ever touching Terraform state (which holds the Google client secret)."
+  type        = string
+  default     = ""
+}
+
 variable "create_infra_role" {
   description = "Also create a broad Terragrunt plan/apply role for GitHub Actions (see infra role below)."
   type        = bool
@@ -160,6 +166,18 @@ data "aws_iam_policy_document" "deploy" {
       test     = "StringEquals"
       variable = "iam:PassedToService"
       values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+
+  # Read the NON-SECRET frontend build config that services/cognito publishes to SSM (Cognito pool / client / domain
+  # + the CloudFront app URL), so the app CD pipeline can bake NEXT_PUBLIC_* into the frontend image. Deliberately
+  # SSM, not Terraform state: state holds the Google client secret, and the deploy role must never see it.
+  dynamic "statement" {
+    for_each = var.ssm_frontend_prefix != "" ? [1] : []
+    content {
+      sid       = "ReadFrontendConfig"
+      actions   = ["ssm:GetParameter", "ssm:GetParameters", "ssm:GetParametersByPath"]
+      resources = ["arn:aws:ssm:${var.aws_region}:${var.account_id}:parameter${var.ssm_frontend_prefix}/*"]
     }
   }
 }
