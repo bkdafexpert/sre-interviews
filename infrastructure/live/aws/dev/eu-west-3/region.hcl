@@ -1,4 +1,5 @@
-# Region-level config. eu-west-3 (Paris) — chosen to match the existing Cognito user pool (eu-west-3_s7BhtGWWn).
+# Region-level config. eu-west-3 (Paris) — EU region close to the users; the Cognito pool is created here too
+# (services/cognito), so the Hosted UI domain lives in the same region.
 locals {
   aws_region = "eu-west-3"
 

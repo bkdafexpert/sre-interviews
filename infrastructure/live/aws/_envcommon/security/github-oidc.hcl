@@ -17,6 +17,10 @@ inputs = {
   name        = "sgcut-${local.env_vars.locals.environment}-gha-app-deploy"
   github_repo = local.env_vars.locals.github_repo
 
+  # Let the app deploy role read the non-secret frontend config that services/cognito publishes to SSM, so cd-app.yml
+  # can bake the Cognito + CloudFront values into the frontend without ever reading Terraform state.
+  ssm_frontend_prefix = "/sgcut/${local.env_vars.locals.environment}/frontend"
+
   # Two-role split for the infra (Terragrunt) workflow: a broad apply role trusted only on main, and a
   # read-only plan role trusted on PRs (which run PR-controlled workflow code) — see modules/aws/iam.
   create_infra_role    = true

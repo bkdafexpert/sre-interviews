@@ -53,6 +53,13 @@ dependency "cloudfront" {
   mock_outputs_allowed_terraform_commands = ["validate", "plan", "destroy"]
 }
 
+# Cognito is created & owned by Terraform; the backend verifies ID tokens against this pool/client (aws-jwt-verify).
+dependency "cognito" {
+  config_path                             = "../cognito"
+  mock_outputs                            = { user_pool_id = "eu-west-3_mock", client_id = "mockclient" }
+  mock_outputs_allowed_terraform_commands = ["validate", "plan", "destroy"]
+}
+
 dependency "ecr" {
   config_path                             = "../../shared/ecr-backend"
   mock_outputs                            = { repository_url = "111111111111.dkr.ecr.eu-west-3.amazonaws.com/sgcut-backend" }
@@ -154,8 +161,8 @@ inputs = {
         { name = "FRONTEND_URL", value = dependency.cloudfront.outputs.public_url },
         { name = "COOKIE_SECURE", value = "true" }, # traffic enters via CloudFront HTTPS
         { name = "AUTH_PROVIDER", value = "cognito" },
-        { name = "COGNITO_USER_POOL_ID", value = local.e.cognito_user_pool_id },
-        { name = "COGNITO_CLIENT_ID", value = local.e.cognito_client_id },
+        { name = "COGNITO_USER_POOL_ID", value = dependency.cognito.outputs.user_pool_id },
+        { name = "COGNITO_CLIENT_ID", value = dependency.cognito.outputs.client_id },
       ]
 
       secrets = [
