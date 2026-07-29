@@ -1,12 +1,38 @@
-# Taskfile - https://taskfile.dev
-# Local operator tasks for the base infrastructure. They wrap `terragrunt run --all` so you can
-# validate / plan / apply the whole environment (in dependency order) from a single command.
+# Taskfile — https://taskfile.dev
+# Local operator tasks. The one that matters here is `bootstrap`: it applies the OIDC layer (the unit CI is not
+# allowed to manage) from your machine, with your own admin credentials — replacing the old GitHub Actions
+# bootstrap workflow so no static admin key ever lives in CI.
 version: "3"
 
 vars:
   ENV_DIR: infrastructure/live/aws/dev/eu-west-3/dev
+  OIDC_DIR: "{{.ENV_DIR}}/security/github-oidc"
 
 tasks:
+  bootstrap:apply:
+    desc: >
+      Bootstrap the OIDC layer locally: create the shared S3 state bucket, then apply the OIDC provider + CI roles
+      (+ the bootstrap user). Run once (and again whenever the OIDC trust/roles change) with admin credentials.
+      This is Terraform end-to-end — the task is just a local runner, deliberately NOT a CI job.
+    dir: "{{.OIDC_DIR}}"
+    # TG_CI unset/false => the unit's `exclude` block stays inactive, so it actually applies (CI sets TG_CI=true to
+    # skip it). Interactive on purpose: terragrunt shows the plan and asks to confirm before touching IAM trust.
+    env:
+      TG_CI: "false"
+    cmds:
+      - aws sts get-caller-identity # fail fast if not authenticated as admin
+      - terragrunt backend bootstrap # idempotent: creates the shared state bucket if absent
+      - terragrunt apply
+
+  bootstrap:plan:
+    desc: "Dry-run the OIDC-layer bootstrap (terragrunt plan on the github-oidc unit)."
+    dir: "{{.OIDC_DIR}}"
+    env:
+      TG_CI: "false"
+    cmds:
+      - aws sts get-caller-identity
+      - terragrunt plan
+
   infra:plan:
     desc: >
       Plan the ENTIRE base-infra stack from your machine (all units, in dependency order). Needs AWS
@@ -20,8 +46,8 @@ tasks:
   infra:apply:
     desc: >
       Apply the ENTIRE base-infra stack from your machine (all units, dependency order). Interactive
-      (terragrunt shows the plan and asks to confirm). Prefer letting CI apply on merge to main; use
-      this only for local bring-up/teardown of the platform.
+      (terragrunt shows the plan and asks to confirm). Prefer letting CI (cd-infra) apply on merge to
+      main; use this only for local bring-up/teardown of the platform.
     dir: "{{.ENV_DIR}}"
     cmds:
       - aws sts get-caller-identity
