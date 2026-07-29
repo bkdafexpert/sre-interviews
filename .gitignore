@@ -1,0 +1,9 @@
+# Claude
+.claude/
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
