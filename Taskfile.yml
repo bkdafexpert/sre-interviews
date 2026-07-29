@@ -1,0 +1,28 @@
+# Taskfile - https://taskfile.dev
+# Local operator tasks for the base infrastructure. They wrap `terragrunt run --all` so you can
+# validate / plan / apply the whole environment (in dependency order) from a single command.
+version: "3"
+
+vars:
+  ENV_DIR: infrastructure/live/aws/dev/eu-west-3/dev
+
+tasks:
+  infra:plan:
+    desc: >
+      Plan the ENTIRE base-infra stack from your machine (all units, in dependency order). Needs AWS
+      credentials for the target account; creates the shared S3 state bucket inline on the first run
+      (--backend-bootstrap). Read-only - shows what an apply would change.
+    dir: "{{.ENV_DIR}}"
+    cmds:
+      - aws sts get-caller-identity # fail fast if not authenticated
+      - terragrunt run --all plan --backend-bootstrap
+
+  infra:apply:
+    desc: >
+      Apply the ENTIRE base-infra stack from your machine (all units, dependency order). Interactive
+      (terragrunt shows the plan and asks to confirm). Prefer letting CI apply on merge to main; use
+      this only for local bring-up/teardown of the platform.
+    dir: "{{.ENV_DIR}}"
+    cmds:
+      - aws sts get-caller-identity
+      - terragrunt run --all apply --backend-bootstrap
