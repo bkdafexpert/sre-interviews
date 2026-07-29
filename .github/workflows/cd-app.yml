@@ -77,6 +77,22 @@ jobs:
       - uses: aws-actions/amazon-ecr-login@v2
       - uses: docker/setup-buildx-action@v3
 
+      # The frontend bakes the Cognito pool/client/domain + the public app URL at build time. services/cognito
+      # publishes those (non-secret) values to SSM Parameter Store; we read them here — never the Terraform state,
+      # which holds the Google client secret. Requires the infra applied first (cognito + cloudfront exist), which is
+      # why infra ships via cd-infra.yml BEFORE app releases.
+      - name: Resolve frontend config from SSM
+        run: |
+          prefix="/${{ vars.PROJECT }}/dev/frontend"
+          get() { aws ssm get-parameter --name "$prefix/$1" --query Parameter.Value --output text; }
+          {
+            echo "NEXT_PUBLIC_AUTH_PROVIDER=cognito"
+            echo "NEXT_PUBLIC_COGNITO_USER_POOL_ID=$(get cognito_user_pool_id)"
+            echo "NEXT_PUBLIC_COGNITO_CLIENT_ID=$(get cognito_client_id)"
+            echo "NEXT_PUBLIC_COGNITO_DOMAIN=$(get cognito_domain)"
+            echo "NEXT_PUBLIC_APP_URL=$(get app_url)"
+          } >> "$GITHUB_ENV"
+
       - name: Build & push backend
         uses: docker/build-push-action@v6
         with:
@@ -91,8 +107,8 @@ jobs:
           cache-to: type=gha,scope=backend,mode=max
 
       # NOTE: the frontend bakes NEXT_PUBLIC_* + the OAuth base at build time, so this image is environment-specific.
-      # Values below are the current (dev) ones; a real prod env (separate Cognito pool + domain) needs a prod-specific
-      # build with prod build-args.
+      # The values come from the Terraform outputs resolved above (dev's Cognito pool + CloudFront URL); a real prod
+      # env would resolve the prod units' outputs the same way.
       - name: Build & push frontend
         uses: docker/build-push-action@v6
         with:
@@ -106,11 +122,11 @@ jobs:
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,scope=frontend,mode=max
           build-args: |
-            NEXT_PUBLIC_AUTH_PROVIDER=${{ vars.NEXT_PUBLIC_AUTH_PROVIDER }}
-            NEXT_PUBLIC_COGNITO_USER_POOL_ID=${{ vars.NEXT_PUBLIC_COGNITO_USER_POOL_ID }}
-            NEXT_PUBLIC_COGNITO_CLIENT_ID=${{ vars.NEXT_PUBLIC_COGNITO_CLIENT_ID }}
-            NEXT_PUBLIC_COGNITO_DOMAIN=${{ vars.NEXT_PUBLIC_COGNITO_DOMAIN }}
-            NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL }}
+            NEXT_PUBLIC_AUTH_PROVIDER=${{ env.NEXT_PUBLIC_AUTH_PROVIDER }}
+            NEXT_PUBLIC_COGNITO_USER_POOL_ID=${{ env.NEXT_PUBLIC_COGNITO_USER_POOL_ID }}
+            NEXT_PUBLIC_COGNITO_CLIENT_ID=${{ env.NEXT_PUBLIC_COGNITO_CLIENT_ID }}
+            NEXT_PUBLIC_COGNITO_DOMAIN=${{ env.NEXT_PUBLIC_COGNITO_DOMAIN }}
+            NEXT_PUBLIC_APP_URL=${{ env.NEXT_PUBLIC_APP_URL }}
 
   # ---- DEPLOY: prod on release (gated by PROD_ENABLED), or the dispatched version/env (rollback) -----------------
   deploy:

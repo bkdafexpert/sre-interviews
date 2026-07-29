@@ -9,7 +9,8 @@ It follows the Gruntwork **`infrastructure-modules` + `infrastructure-live`** sp
 a second cloud is an additive tree rather than a rewrite — see the **Multicloud** section.
 
 > The datastore is **PostgreSQL** (the app is Prisma/NestJS on Postgres), not the Redis/ElastiCache in the older
-> `../../ARCHITECTURE.md` draft. Region is **eu-west-3 (Paris)**, matching the existing Cognito user pool.
+> `../../ARCHITECTURE.md` draft. Region is **eu-west-3 (Paris)**; the Cognito user pool is created here too
+> (`services/cognito`), so its Hosted UI lives in the same region.
 
 ---
 
@@ -38,7 +39,7 @@ infrastructure/
     │       └── eu-west-3/           # region
     │           ├── region.hcl       #   region + AZs
     │           └── dev/             # environment
-    │               ├── env.hcl      #   ALL per-env knobs (CIDR, sizing, Cognito, GH repo)
+    │               ├── env.hcl      #   ALL per-env knobs (CIDR, sizing, Google IdP client, GH repo)
     │               ├── networking/{vpc,security-groups}/
     │               ├── security/{app-secrets,github-oidc}/
     │               ├── shared/{ecr-backend,ecr-frontend}/
@@ -127,7 +128,8 @@ bucket (OpenTofu ≥ 1.10) — no DynamoDB table.
 | --- | --- | --- |
 | `live/aws/dev/account.hcl` | `aws_account_id` | real dev account ID (used for state naming + provider guard-rail) |
 | `live/aws/dev/eu-west-3/dev/env.hcl` | `github_repo` | your `org/repo` for the OIDC trust |
-| — | Cognito IDs in `env.hcl` | already set from the app's `docker-compose.yml`; change per env if needed |
+| GitHub Variable | `GOOGLE_CLIENT_ID` | Google OAuth client ID for Cognito's Google IdP (not secret). Read by `services/cognito` via `get_env`; leave unset to stand up the pool without Google. |
+| GitHub Secret | `GOOGLE_CLIENT_SECRET` | the matching Google secret — injected as an env var on the cd-infra apply step, never committed (locally: `export` it before `task infra:apply`). After apply, register the pool's `google_redirect_uri` output on the Google OAuth client. |
 
 Images must exist in ECR before the services become healthy: apply `shared/ecr-*` first, let CI push
 `:latest`, then apply `services/backend` + `services/frontend` (or expect the initial tasks to fail pulling until CI runs).
@@ -218,6 +220,9 @@ for it now — see `live/azure/README.md` for the sketch.
 ## Not yet included (natural follow-ups)
 
 `stage` + `prod` environment trees, an **ACM cert + custom domain** on CloudFront (currently the default
-`*.cloudfront.net`), a **WAF** web ACL on the distribution, and a Cognito user-pool module (currently referencing the
-pre-existing pool). CloudWatch **alarms + dashboard** now live in `observability/cloudwatch` (5xx / p99 latency /
-running-task count).
+`*.cloudfront.net`), and a **WAF** web ACL on the distribution. The Cognito stack (pool, Hosted UI domain, Google
+IdP, app client) is now created and owned by Terraform in `services/cognito` — its app client callback/logout URLs are
+wired to the CloudFront output. The backend reads the pool/client via a Terraform dependency; the frontend build
+(cd-app.yml) reads the non-secret pool/client/domain/app-URL from **SSM Parameter Store** (`/sgcut/dev/frontend/*`,
+published by the cognito unit) so the app pipeline never touches the state that holds the Google client secret.
+CloudWatch **alarms + dashboard** live in `observability/cloudwatch` (5xx / p99 latency / running-task count).

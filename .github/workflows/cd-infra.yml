@@ -53,5 +53,10 @@ jobs:
           sudo chmod +x /usr/local/bin/terragrunt
           terragrunt --version && tofu version
 
+      # Google OAuth creds for the Cognito Google IdP (services/cognito reads them via get_env). client_id is a
+      # GitHub Variable (not secret); client_secret is a GitHub Secret and lands only in the cognito unit's state.
       - name: Terragrunt apply
+        env:
+          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
         run: terragrunt run --all apply

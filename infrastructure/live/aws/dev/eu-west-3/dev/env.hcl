@@ -30,10 +30,10 @@ locals {
   frontend_min_capacity  = 2
   frontend_max_capacity  = 6
 
-  # ---- Auth (Cognito) — existing pool, sourced from the app's docker-compose.yml ----------------------------------
-  cognito_user_pool_id = "eu-west-3_s7BhtGWWn"
-  cognito_client_id    = "450qv2b4bt0fn7t5qsffcv16ov"
-  cognito_domain       = "eu-west-3s7bhtgwwn.auth.eu-west-3.amazoncognito.com"
+  # ---- Auth (Cognito) — created & owned by Terraform (services/cognito) -------------------------------------------
+  # Nothing lives here: the pool, Hosted UI domain, Google IdP and app client are all created by the cognito unit,
+  # which publishes the non-secret frontend config to SSM. The Google OAuth client_id / client_secret are injected
+  # from the environment (GOOGLE_CLIENT_ID GitHub Variable + GOOGLE_CLIENT_SECRET GitHub Secret) — see services/cognito.
 
   # ---- CI/CD (GitHub Actions OIDC) --------------------------------------------------------------------------------
   github_repo = "bkdafexpert/sre-interviews"
