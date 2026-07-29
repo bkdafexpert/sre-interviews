@@ -1,0 +1,88 @@
+name: CI · Application
+
+# Validates the application on PRs: lints, tests and builds only the app(s) that changed (backend / frontend).
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "applications/**"
+      - ".github/workflows/ci-app.yml"
+
+concurrency:
+  group: ci-app-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    name: Detect changed apps (backend / frontend)
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:  ['applications/backend/**']
+            frontend: ['applications/frontend/**']
+
+  backend:
+    name: Backend · lint + build + tests (unit + e2e)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: applications/backend
+    # Real Postgres for the e2e suite (create → 302 redirect → stats), demo auth so no Cognito is needed.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sgcut
+          POSTGRES_PASSWORD: sgcut
+          POSTGRES_DB: sgcut
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sgcut -d sgcut"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://sgcut:sgcut@localhost:5432/sgcut?schema=public
+      AUTH_PROVIDER: demo
+      JWT_SECRET: test-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+      - run: npm run lint
+      - run: npx prisma generate
+      - run: npm run build
+      - run: npx prisma db push
+      - run: npm run prisma:seed
+      - run: npm run test:unit
+      - run: npm test # e2e
+
+  frontend:
+    name: Frontend · lint + build
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: applications/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+      - run: npm run lint
+      - run: npm run build
