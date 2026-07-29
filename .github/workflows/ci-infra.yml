@@ -1,0 +1,90 @@
+name: CI · Infrastructure
+
+# Validates infrastructure on PRs: security-as-code (tflint hard gate + checkov soft-fail) then a keyless plan.
+# Assumes the read-only OIDC plan role. Toolchain versions match infrastructure/.tool-versions; root.hcl sets
+# terraform_binary = "tofu".
+on:
+  pull_request:
+    paths:
+      - "infrastructure/**"
+      - ".github/workflows/ci-infra.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: terragrunt-dev # shared with cd-infra / bootstrap — never touch the same state at once
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_INFRA_PLAN_ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.PROJECT }}-dev-gha-infra-all-ro
+  TOFU_VERSION: ${{ vars.TOFU_VERSION }}
+  TERRAGRUNT_VERSION: ${{ vars.TERRAGRUNT_VERSION }}
+  TG_NON_INTERACTIVE: "true"
+  TG_WORKING_DIR: infrastructure/live/aws/dev/${{ vars.AWS_REGION }}/dev
+  # Excludes the security/github-oidc unit from `run --all`: the CI must never manage the OIDC roles that gate it.
+  TG_CI: "true"
+
+jobs:
+  # No AWS creds needed, so it always runs.
+  static-analysis:
+    name: Static analysis (tflint + checkov)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup tflint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: tflint (modules)
+        working-directory: infrastructure/modules
+        run: |
+          tflint --init
+          tflint --recursive
+
+      - name: checkov (terraform)
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: infrastructure/modules
+          framework: terraform
+          quiet: true
+          soft_fail: true # flip to false to make security findings a blocking gate
+
+  plan:
+    name: Terragrunt plan (read-only, all units)
+    needs: static-analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC, read-only plan role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_INFRA_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - name: Install Terragrunt
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/terragrunt \
+            "https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/terragrunt_linux_amd64"
+          sudo chmod +x /usr/local/bin/terragrunt
+          terragrunt --version && tofu version
+
+      # -lock=false:    the read-only plan role can't write the S3 state lock, and a plan needs no lock.
+      # -refresh=false: skip the state refresh so the plan role never needs read actions that AWS-managed
+      #                 ReadOnlyAccess deliberately omits — notably secretsmanager:GetSecretValue, which the
+      #                 refresh of the app-secrets `aws_secretsmanager_secret_version` resources would call.
+      #                 Keeping it off also preserves the security model: this role is PR-assumable, so it must
+      #                 never be able to read secret *values*. The PR gate validates the diff against stored
+      #                 state; the authoritative full-refresh plan runs at apply on main (admin role, cd-infra).
+      - name: Terragrunt plan
+        run: terragrunt run --all plan -- -lock=false -refresh=false
