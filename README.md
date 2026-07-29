@@ -99,13 +99,21 @@ The backend runs `nest build`, the frontend `next build`, each in its own multi-
 
 ### Infrastructure Provisioning (OpenTofu + Terragrunt)
 
-All AWS infrastructure is managed reproducibly with Terragrunt wrapping OpenTofu. Bootstrap the
-one-off OIDC layer once with `task bootstrap:apply`, then apply the stack:
+**Prerequisites:** [OpenTofu 1.12.5 + Terragrunt 1.1.1](infrastructure/.tool-versions) (install via
+`mise install` or `asdf install`), [**Task**](https://taskfile.dev) (the `task` runner), and AWS
+credentials for the target account.
+
+All AWS infrastructure is managed reproducibly with Terragrunt wrapping OpenTofu.
+
+> ⚠️ **Run `task bootstrap:apply` once before any provisioning.** It creates the GitHub OIDC provider
+> and the keyless CI roles. CI cannot bootstrap its own trust (self-lockout risk), so this one-off
+> step is applied locally by an operator with admin credentials; without it the provisioning
+> pipelines have no role to assume.
 
 ```bash
-cd infrastructure/live/aws/dev/eu-west-3/dev
-terragrunt run --all plan     # preview the whole environment (dependency order)
-terragrunt run --all apply    # create / update everything
+task bootstrap:apply   # ONE-OFF: OIDC provider + CI roles (local, admin credentials)
+task infra:plan        # preview the whole environment (dependency order)
+task infra:apply       # create / update everything
 ```
 
 See [`infrastructure/README.md`](infrastructure/README.md#usage) for the dependency graph and the
