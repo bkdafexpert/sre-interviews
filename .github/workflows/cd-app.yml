@@ -1,0 +1,174 @@
+name: CD · Application
+
+# Full application delivery pipeline (backend + frontend). Two entry modes:
+#   - push to main touching applications/** → RELEASE (semantic-release computes the app version from the
+#     Conventional Commits, tags v<version> + GitHub Release) → BUILD & PUSH images → DEPLOY to prod.
+#   - workflow_dispatch → DEPLOY ONLY: (re)deploy an existing version to dev|prod (rollback), no release, no rebuild.
+#
+# Keyless via OIDC (deploy role). Infra ships separately via cd-infra.yml — this workflow never touches Terragrunt.
+# The prod auto-deploy is gated behind the repo variable PROD_ENABLED (set it "true" once the prod ECS services exist);
+# until then release + image push still run and the deploy is skipped.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "applications/**"
+      - ".github/workflows/cd-app.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        type: choice
+        options: [dev, prod]
+        required: true
+      version:
+        description: "Version tag to (re)deploy — must already exist in ECR, e.g. 1.2.3"
+        type: string
+        required: true
+
+permissions:
+  contents: write # semantic-release: tags + GitHub Releases
+  issues: write
+  pull-requests: write
+  id-token: write # OIDC for ECR + ECS
+
+concurrency:
+  group: cd-app-${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'main' }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.PROJECT }}-dev-gha-app-deploy
+  ECR_REGISTRY: ${{ vars.AWS_ACCOUNT_ID }}.dkr.ecr.${{ vars.AWS_REGION }}.amazonaws.com
+
+jobs:
+  # ---- RELEASE (push only): compute the app version from Conventional Commits -----------------------------------
+  release:
+    name: Release · compute version (semantic-release)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.sr.outputs.new_release_published }}
+      version: ${{ steps.sr.outputs.new_release_version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Semantic release (tag + GitHub Release)
+        id: sr
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          semantic_version: "24"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---- BUILD & PUSH (push + new release only): versioned images to ECR ------------------------------------------
+  build-push:
+    name: Build & push images (backend + frontend)
+    needs: release
+    if: github.event_name == 'push' && needs.release.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build & push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: applications/backend
+          platforms: linux/amd64
+          provenance: false
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ vars.PROJECT }}-backend:${{ needs.release.outputs.version }}
+            ${{ env.ECR_REGISTRY }}/${{ vars.PROJECT }}-backend:latest
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+
+      # NOTE: the frontend bakes NEXT_PUBLIC_* + the OAuth base at build time, so this image is environment-specific.
+      # Values below are the current (dev) ones; a real prod env (separate Cognito pool + domain) needs a prod-specific
+      # build with prod build-args.
+      - name: Build & push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: applications/frontend
+          platforms: linux/amd64
+          provenance: false
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ vars.PROJECT }}-frontend:${{ needs.release.outputs.version }}
+            ${{ env.ECR_REGISTRY }}/${{ vars.PROJECT }}-frontend:latest
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
+          build-args: |
+            NEXT_PUBLIC_AUTH_PROVIDER=${{ vars.NEXT_PUBLIC_AUTH_PROVIDER }}
+            NEXT_PUBLIC_COGNITO_USER_POOL_ID=${{ vars.NEXT_PUBLIC_COGNITO_USER_POOL_ID }}
+            NEXT_PUBLIC_COGNITO_CLIENT_ID=${{ vars.NEXT_PUBLIC_COGNITO_CLIENT_ID }}
+            NEXT_PUBLIC_COGNITO_DOMAIN=${{ vars.NEXT_PUBLIC_COGNITO_DOMAIN }}
+            NEXT_PUBLIC_APP_URL=${{ vars.NEXT_PUBLIC_APP_URL }}
+
+  # ---- DEPLOY: prod on release (gated by PROD_ENABLED), or the dispatched version/env (rollback) -----------------
+  deploy:
+    name: Deploy ${{ matrix.app }} to ECS
+    needs: [release, build-push]
+    if: >-
+      always() &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'push' && needs.release.outputs.published == 'true' &&
+         needs.build-push.result == 'success' && vars.PROD_ENABLED == 'true')
+      )
+    runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'prod' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [backend, frontend]
+    env:
+      ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || 'prod' }}
+      VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.version || needs.release.outputs.version }}
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify image tag exists in ECR
+        run: |
+          aws ecr describe-images --repository-name "${{ vars.PROJECT }}-${{ matrix.app }}" \
+            --image-ids imageTag="$VERSION" --region "$AWS_REGION" >/dev/null
+
+      - name: Render task definition (pin image to version)
+        id: render
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${{ vars.PROJECT }}-${ENVIRONMENT}-${{ matrix.app }}" \
+            --query taskDefinition --region "$AWS_REGION" \
+          | jq 'del(.taskDefinitionArn,.revision,.status,.requiresAttributes,.compatibilities,.registeredAt,.registeredBy)' \
+          > taskdef.json
+          echo "file=taskdef.json" >> "$GITHUB_OUTPUT"
+
+      - name: Set container image
+        id: taskdef
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ steps.render.outputs.file }}
+          container-name: ${{ matrix.app }}
+          image: ${{ env.ECR_REGISTRY }}/${{ vars.PROJECT }}-${{ matrix.app }}:${{ env.VERSION }}
+
+      - name: Deploy to ECS (wait + auto-rollback)
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.taskdef.outputs.task-definition }}
+          service: ${{ vars.PROJECT }}-${{ env.ENVIRONMENT }}-${{ matrix.app }}
+          cluster: ${{ vars.PROJECT }}-${{ env.ENVIRONMENT }}
+          wait-for-service-stability: true
+
+      - name: Summary
+        run: echo "### Deployed \`${{ matrix.app }}\` \`$VERSION\` to \`${{ vars.PROJECT }}-${ENVIRONMENT}\` ✅" >> "$GITHUB_STEP_SUMMARY"
