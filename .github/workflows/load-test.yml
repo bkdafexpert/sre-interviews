@@ -1,0 +1,87 @@
+name: Load test (k6)
+
+# Manual full-journey load test against the deployed dev environment. k6 authenticates via Cognito
+# (USER_PASSWORD_AUTH, a dedicated native test user — no browser/Google flow), then loops
+# home -> create link -> read -> follow redirect. Thresholds are SLOs: if breached, k6 exits non-zero and this
+# job FAILS (a real quality gate). Not wired to PRs (too heavy / noisy) — dispatch only.
+#
+# BASE_URL and the Cognito client are read from SSM Parameter Store (/sgcut/dev/frontend/*, published by
+# services/cognito) unless base_url is supplied. Prerequisites to actually run:
+#   - the app client must allow USER_PASSWORD_AUTH (explicit auth flow)
+#   - a confirmed native Cognito user exists; set repo Variable LOADTEST_USERNAME + Secret LOADTEST_PASSWORD
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "Target base URL (defaults to the CloudFront URL from SSM)"
+        type: string
+        required: false
+      vus:
+        description: "Virtual users (peak concurrency)"
+        type: string
+        default: "10"
+      duration:
+        description: "Steady-state duration (e.g. 1m, 5m)"
+        type: string
+        default: "1m"
+      p95_ms:
+        description: "p95 latency SLO in ms (job fails if exceeded)"
+        type: string
+        default: "800"
+
+permissions:
+  contents: read
+  id-token: write # OIDC to read the SSM frontend config
+
+concurrency:
+  group: load-test
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.PROJECT }}-dev-gha-app-deploy
+
+jobs:
+  k6:
+    name: k6 journey (full user flow, SLO gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve target + Cognito client from SSM
+        run: |
+          prefix="/${{ vars.PROJECT }}/dev/frontend"
+          get() { aws ssm get-parameter --name "$prefix/$1" --query Parameter.Value --output text; }
+          base_url="${{ inputs.base_url }}"
+          [ -z "$base_url" ] && base_url="$(get app_url)"
+          {
+            echo "BASE_URL=$base_url"
+            echo "COGNITO_CLIENT_ID=$(get cognito_client_id)"
+          } >> "$GITHUB_ENV"
+
+      - name: Install k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run k6 journey
+        env:
+          COGNITO_REGION: ${{ vars.AWS_REGION }}
+          LOADTEST_USERNAME: ${{ vars.LOADTEST_USERNAME }}
+          LOADTEST_PASSWORD: ${{ secrets.LOADTEST_PASSWORD }}
+          VUS: ${{ inputs.vus }}
+          DURATION: ${{ inputs.duration }}
+          P95_MS: ${{ inputs.p95_ms }}
+        # k6 exits 99 when a threshold is breached -> the step (and job) fail. That's the gate.
+        run: k6 run --summary-export=k6-summary.json applications/loadtest/journey.js
+
+      - name: Upload k6 summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-summary
+          path: k6-summary.json
