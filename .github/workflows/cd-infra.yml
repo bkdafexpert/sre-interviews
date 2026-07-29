@@ -1,0 +1,57 @@
+name: CD · Infrastructure
+
+# Provisioning: applies the whole environment on merge to main. Keyless — assumes the OIDC infra apply role
+# (trust limited to main). The github-oidc unit is excluded from `run --all` (TG_CI): the CI must never manage the
+# roles that gate it — those are applied out-of-band by an operator locally via `task bootstrap` (see
+# infrastructure/README.md → "Bootstrap the OIDC layer"), so the admin credential never lives in GitHub Secrets.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infrastructure/**"
+      - ".github/workflows/cd-infra.yml"
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: terragrunt-dev # shared with ci-infra / bootstrap — never apply while another state op runs
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  AWS_INFRA_APPLY_ROLE_ARN: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/${{ vars.PROJECT }}-dev-gha-infra-all-rw
+  TOFU_VERSION: ${{ vars.TOFU_VERSION }}
+  TERRAGRUNT_VERSION: ${{ vars.TERRAGRUNT_VERSION }}
+  TG_NON_INTERACTIVE: "true"
+  TG_WORKING_DIR: infrastructure/live/aws/dev/${{ vars.AWS_REGION }}/dev
+  TG_CI: "true"
+
+jobs:
+  apply:
+    name: Terragrunt apply (all units) → dev
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC, admin apply role)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_INFRA_APPLY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Install OpenTofu
+        uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - name: Install Terragrunt
+        run: |
+          sudo curl -fsSL -o /usr/local/bin/terragrunt \
+            "https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/terragrunt_linux_amd64"
+          sudo chmod +x /usr/local/bin/terragrunt
+          terragrunt --version && tofu version
+
+      - name: Terragrunt apply
+        run: terragrunt run --all apply
