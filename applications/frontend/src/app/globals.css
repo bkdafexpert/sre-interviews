@@ -1,0 +1,324 @@
+/* Base + interaction styles for Sgcut, ported from the reference design (sgcut.dc.html). */
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #ffffff;
+  font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+  color: #141414;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: #e9041e;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition: opacity 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+a:hover {
+  opacity: 0.7;
+}
+
+input,
+button,
+select {
+  font-family: inherit;
+}
+input::placeholder {
+  color: #8a8a8a;
+}
+
+::selection {
+  background: #fbd2d8;
+  color: #8e0212;
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes aiHue {
+  to {
+    filter: hue-rotate(360deg) blur(10px);
+  }
+}
+
+.fade-up {
+  animation: fadeUp 360ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ---- Interactive element hover / active states ---- */
+.sg-google {
+  transition: background 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sg-google:hover {
+  background: #f7f6f4;
+}
+
+.sg-btn-primary {
+  transition:
+    background 120ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sg-btn-primary:hover {
+  background: #c10318;
+}
+.sg-btn-primary:active {
+  transform: scale(0.97);
+}
+
+.sg-btn-ghost {
+  transition: background 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sg-btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.sg-avatar {
+  transition:
+    background 120ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sg-avatar:hover {
+  background: #f7f6f4;
+  border-color: #e5e5e5 !important;
+}
+
+.sg-menu-item {
+  transition: background 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sg-menu-item:hover {
+  background: #f7f6f4;
+}
+
+.sg-icon-btn {
+  transition:
+    background 120ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sg-icon-btn:hover {
+  background: #f0f0f0;
+}
+.sg-icon-btn-danger:hover {
+  background: #fbe9eb;
+  color: #c10318;
+}
+
+.sg-chip {
+  transition: opacity 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sg-chip:hover {
+  opacity: 0.85;
+}
+
+/* ---- App shell layout (responsive) ---- */
+.sg-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 32px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #ffffff;
+}
+.sg-main {
+  flex: 1;
+  min-width: 0;
+  padding: 40px 48px 64px;
+}
+.sg-container {
+  max-width: 1020px;
+  margin: 0 auto;
+}
+
+/* Link rows: subtle lift on hover, matching the reference. */
+.sg-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 16px;
+  align-items: center;
+  padding: 11px 24px;
+  border-bottom: 1px solid #f0f0f0;
+  cursor: pointer;
+  background: #ffffff;
+  transition: box-shadow 120ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.sg-row:hover {
+  box-shadow:
+    inset 1px 0 0 #e5e5e5,
+    inset -1px 0 0 #e5e5e5,
+    0 1px 2px 0 rgba(20, 20, 20, 0.3),
+    0 1px 3px 1px rgba(20, 20, 20, 0.15);
+  z-index: 2;
+}
+.sg-row-main {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.sg-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.sg-row-clics {
+  font-size: 13.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-align: right;
+  min-width: 68px;
+}
+@media (max-width: 720px) {
+  .sg-row-clics {
+    min-width: 0;
+    text-align: left;
+  }
+}
+.sg-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+@media (max-width: 640px) {
+  .sg-header {
+    padding: 12px 16px;
+  }
+  .sg-main {
+    padding: 20px 14px 48px;
+  }
+}
+@media (min-width: 641px) and (max-width: 900px) {
+  .sg-main {
+    padding: 28px 24px 56px;
+  }
+}
+
+/* Stack link rows on narrow screens: short URL + destination on top, meta below, actions on the right. */
+@media (max-width: 720px) {
+  .sg-row {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      'main actions'
+      'meta actions';
+    column-gap: 10px;
+    row-gap: 6px;
+    padding: 12px 16px;
+  }
+  .sg-row-main {
+    grid-area: main;
+  }
+  .sg-row-meta {
+    grid-area: meta;
+  }
+  .sg-row-actions {
+    grid-area: actions;
+    align-self: center;
+  }
+}
+
+/* ---- Login split-screen (responsive) ---- */
+.sg-login {
+  min-height: 100vh;
+  display: flex;
+  flex-wrap: wrap;
+}
+.sg-login-hero {
+  flex: 1 1 380px;
+  background: #141414;
+  color: #ffffff;
+  padding: 64px 56px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 48px;
+  min-height: 100vh;
+}
+.sg-login-side {
+  flex: 1 1 420px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  background: #ffffff;
+}
+.sg-login-pitch {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 440px;
+}
+.sg-login-title {
+  color: #141414;
+}
+.sg-login-sub {
+  color: #5a5a5a;
+}
+.sg-login-note {
+  color: #8a8a8a;
+}
+@media (max-width: 860px) {
+  .sg-login-hero {
+    min-height: auto;
+    padding: 44px 36px;
+    gap: 28px;
+  }
+  .sg-login-side {
+    padding: 40px 24px 56px;
+  }
+}
+/* Phones: one seamless black page — brand pinned top, connexion form vertically centered. */
+@media (max-width: 560px) {
+  .sg-login {
+    flex-direction: column;
+  }
+  .sg-login-hero {
+    flex: 0 0 auto;
+    padding: 28px 22px 8px;
+    gap: 16px;
+  }
+  .sg-login-side {
+    flex: 1 1 auto;
+    align-items: center;
+    justify-content: center;
+    /* Extra bottom room biases the vertically-centered form toward the upper-middle. */
+    padding: 12px 22px 22vh;
+    background: #141414;
+  }
+  .sg-login-title {
+    color: #ffffff;
+  }
+  .sg-login-sub {
+    color: #b8b8b8;
+  }
+  .sg-login-note {
+    color: #9a9a9a;
+  }
+  .sg-login-foot {
+    display: none;
+  }
+  /* Hide the marketing headline + subtitle on phones — go straight to the connexion form. */
+  .sg-login-pitch {
+    display: none;
+  }
+}
