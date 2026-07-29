@@ -1,0 +1,10 @@
+# The image builds from pinned release binaries and COPYs nothing from the repo,
+# so keep the build context tiny — exclude everything Terragrunt/OpenTofu generate.
+**/.terragrunt-cache/
+**/.terraform/
+**/.terraform.lock.hcl
+**/*.tfstate
+**/*.tfstate.backup
+**/backend.tf
+**/provider.tf
+.idea/
