@@ -13,7 +13,7 @@ locals {
   single_nat_gateway = true
 
   # ---- Data store -------------------------------------------------------------------------------------------------
-  db_instance_class    = "db.t4g.micro"
+  db_instance_class    = "db.t3.micro" # t3.micro (Intel): t4g.micro hit insufficient-capacity in eu-west-3
   db_allocated_storage = 20
   db_multi_az          = false # true in prod
 
