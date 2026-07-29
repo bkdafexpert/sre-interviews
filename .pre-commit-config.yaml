@@ -1,0 +1,46 @@
+# Pre-commit — fast, deterministic infra checks BEFORE commit, mirroring the CI static-analysis gate
+# (.github/workflows/ci-infra.yml: tofu fmt + tflint + checkov). This is a fast-feedback loop, NOT a replacement for
+# CI: it is bypassable (`git commit --no-verify`), so CI stays the real gate. Kept deliberately fast — fmt/lint/validate
+# only, never a `terragrunt plan` (slow, needs AWS creds).
+#
+# One-time local setup (tofu + terragrunt assumed already installed):
+#   brew install pre-commit tflint checkov
+#   export PCT_TFPATH="$(command -v tofu)"   # tell the terraform_* hooks to use OpenTofu — add to your ~/.zshrc
+#   pre-commit install                        # wire the git hook
+# Run against the whole repo on demand:
+#   pre-commit run --all-files
+
+minimum_pre_commit_version: "3.5.0"
+
+# Never descend into generated / vendored trees.
+exclude: '(\.terragrunt-cache/|\.terraform/|/node_modules/)'
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-yaml # catches malformed GitHub workflow YAML before it reaches Actions
+        args: [--allow-multiple-documents]
+
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.108.1
+    hooks:
+      - id: terraform_fmt # tofu fmt (via PCT_TFPATH); rewrites in place
+      - id: terraform_validate # tofu validate per module (init -backend=false); live/ has no raw .tf, so this hits modules/
+      - id: terraform_tflint # same ruleset as CI — this is the hook that would have caught the unused-variable error
+      - id: terraform_checkov
+        args:
+          - --args=--quiet
+          - --args=--soft-fail # security findings advisory, exactly like ci-infra.yml (soft_fail: true)
+
+  - repo: local
+    hooks:
+      - id: terragrunt-hcl-fmt
+        name: terragrunt hcl fmt (check)
+        entry: terragrunt hcl fmt --check --diff
+        language: system
+        files: \.hcl$
+        pass_filenames: false
